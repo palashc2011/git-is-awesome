@@ -13,7 +13,7 @@ const getBarCodeDataFromConsignments = async (consignmentList, organisationId, e
 	const referenceNumWise = {};
 	if (!sorterEnabled) {
 		return referenceNumWise;
-	}
+	} 
 	const referenceNumList = consignmentList.filter(consignment => (consignment && consignment.success)).map(consignment => consignment.reference_number);
 	if (!referenceNumList.length) {
 		return referenceNumWise;
@@ -93,30 +93,31 @@ module.exports = function(CustomerIntegration) {
 				}
 			});
 
-			const sorterInfo = orgConfig.sorter_info;	
-			const defaultOriginHubCode = get(sorterInfo, 'defaultOriginPincode', '');
-			const locationIds = [];
-			consignmentsInfo.forEach(singleConsignment => {
-				if (singleConsignment.given_destination_location_id) {
-					locationIds.push(singleConsignment.given_destination_location_id);
+			const response = await bookingHelper.pushSoftdata(paramsToSend, req);
+			const referenceNumWiseBarCodes = await getBarCodeDataFromConsignments(response.data, req.organisationId, req.extendedModels);
+			response.data.forEach(function (consignment, j) {
+				// Send to datadog
+				if (consignment.success) {
+					consignment.barCodeData = referenceNumWiseBarCodes[consignment.reference_number] || '';
+					app.dogstatsd.increment('OPS_CUSTOMER_SOFTDATA_API', 1, {
+						status: 'success',
+						organisationId: req.organisationId,
+						customerId: req.customerId,
+						customerName: customerDetails.name,
+						customerCode: customerDetails.code,
+					});
+				} else {
+					app.dogstatsd.increment('OPS_CUSTOMER_SOFTDATA_API', 1, {
+						status: 'failed',
+						organisationId: req.organisationId,
+						customerId: req.customerId,
+						customerName: customerDetails.name,
+						customerCode: customerDetails.code,
+						errorReason: consignment.reason,
+						errorMessage: consignment.message,
+					});
 				}
-				if (singleConsignment.given_origin_location_id) {
-					locationIds.push(singleConsignment.given_origin_location_id);
-				}
-			});
-			let pincodeDetails = [];
-			if (locationIds.length) {
-				pincodeDetails = await extendedModels.Location.find({
-					where: {
-						id: {
-							inq: locationIds
-						},
-						organisation_id: organisationId
-					},
-					fields: ['id', 'pincode']
-				});
-			}
-		
+
 				// Handle pieces
 				if (paramsToSend.consignments[j].pieces_detail && consignment.success) {
 					let numOfPieces = paramsToSend.consignments[j].pieces_detail.length || 0;
@@ -280,7 +281,14 @@ module.exports = function(CustomerIntegration) {
 					eventElem.poc_image = null;
 				}
 
-				const newine = "palash";
+				if (elem.type === 'attempted') {
+					eventElem.failure_reason = elem.failure_reason;
+				}
+
+				if (elem.type === 'delivered') {
+					eventElem.signature_image = elem.signature_image;
+				}
+
 				eventsToSend.push(eventElem);
 			});
 			toRet.events = eventsToSend;
@@ -326,30 +334,7 @@ module.exports = function(CustomerIntegration) {
 					customer_id: customerId
 				}
 			});
-			const sorterInfo = orgConfig.sorter_info;	
-			const defaultOriginHubCode = get(sorterInfo, 'defaultOriginPincode', '');
-			const locationIds = [];
-			consignmentsInfo.forEach(singleConsignment => {
-				if (singleConsignment.given_destination_location_id) {
-					locationIds.push(singleConsignment.given_destination_location_id);
-				}
-				if (singleConsignment.given_origin_location_id) {
-					locationIds.push(singleConsignment.given_origin_location_id);
-				}
-			});
-			let pincodeDetails = [];
-			if (locationIds.length) {
-				pincodeDetails = await extendedModels.Location.find({
-					where: {
-						id: {
-							inq: locationIds
-						},
-						organisation_id: organisationId
-					},
-					fields: ['id', 'pincode']
-				});
-			}
-					if (!requiredConsignments) {
+			if (!requiredConsignments) {
 				throw helper.wrongInputError('', {
 					message: 'Consignment does not belong to customer',
 					reason: 'CONSIGNMENT_NOT_FOUND',
@@ -421,7 +406,6 @@ module.exports = function(CustomerIntegration) {
 					url: shippingLabelUrl
 				}
 			};
-			const ssss = 'ffffff';
 		} catch(err) {
 			app.dogstatsd.increment('OPS_CUSTOMER_LABEL_URL_API', 1, {
 				status: 'failed',
